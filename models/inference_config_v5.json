@@ -1,0 +1,22 @@
+{
+  "image_size": [
+    224,
+    224
+  ],
+  "class_names": [
+    "heart",
+    "oblong",
+    "oval",
+    "round",
+    "square"
+  ],
+  "confidence_threshold": 0.4800000000000001,
+  "model_version": "ensemble-effnetv2b0-resnet50v2-v5",
+  "requires_face_crop": true,
+  "ensemble_weights": [
+    0.5,
+    0.5
+  ],
+  "uses_tta": true,
+  "max_upload_bytes": 5242880
+}

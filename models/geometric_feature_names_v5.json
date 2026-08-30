@@ -1,0 +1,14 @@
+[
+  "jaw_width_ratio",
+  "cheekbone_width_ratio",
+  "forehead_width_ratio",
+  "jaw_to_cheek_ratio",
+  "forehead_to_cheek_ratio",
+  "jaw_to_forehead_ratio",
+  "length_to_cheek_ratio",
+  "chin_width_ratio",
+  "jaw_taper_ratio",
+  "upper_face_ratio",
+  "lower_face_ratio",
+  "jaw_angle_norm"
+]

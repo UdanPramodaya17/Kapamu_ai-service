@@ -1,0 +1,10 @@
+tensorflow>=2.19
+mtcnn
+mediapipe>=0.10.9
+scikit-learn
+pillow
+numpy
+fastapi
+uvicorn[standard]
+python-multipart
+requests
