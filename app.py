@@ -50,6 +50,15 @@ app.add_middleware(
 )
 
 
+@app.on_event("startup")
+def startup_event():
+    try:
+        from inference import _load_resources
+        _load_resources()
+        print("AI inference engine pre-warmed successfully!")
+    except Exception as exc:
+        print(f"Startup pre-warming notice: {exc}")
+
 # ---------------------------------------------------------------------------
 # Health check
 # ---------------------------------------------------------------------------

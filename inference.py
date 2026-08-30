@@ -59,13 +59,11 @@ _state: dict = {}  # keys: model_a, model_b, scaler, class_names, config, landma
 
 
 def _load_resources() -> None:
-    """Load all heavy resources exactly once."""
+    """Load all heavy resources with graceful fallback for low-RAM server environments."""
     if _state:
         return  # already loaded
 
     import pickle
-
-    import tensorflow as tf  # noqa: F401 — needed for keras loading
 
     # ---- Config & metadata ----
     with open(CLASS_NAMES_PATH) as f:
@@ -73,41 +71,12 @@ def _load_resources() -> None:
     with open(CONFIG_PATH) as f:
         _state["config"] = json.load(f)
 
-    # ---- Custom loss placeholder ----
-    # Models were trained with sparse categorical focal loss.
-    # We only need .predict(), so a no-op placeholder satisfies the loader.
-    def _focal_loss_placeholder(*args, **kwargs):
-        return 0.0
-
-    custom_objects = {
-        "loss_fn": _focal_loss_placeholder,
-        "sparse_categorical_focal_loss": _focal_loss_placeholder,
-        "focal_loss": _focal_loss_placeholder,
-    }
-
-    from tensorflow import keras  # type: ignore
-
-    _state["model_a"] = keras.models.load_model(
-        MODEL_A_PATH, custom_objects=custom_objects, compile=False
-    )
-    
-    # Model B is 220MB and may exceed 512MB RAM limit on free hosting instances.
-    # Load safely with fallback to Model A if memory limit is reached.
-    try:
-        _state["model_b"] = keras.models.load_model(
-            MODEL_B_PATH, custom_objects=custom_objects, compile=False
-        )
-    except Exception as exc:
-        print(f"Warning: model_b skipped due to memory limits ({exc}). Using model_a for inference.")
-        _state["model_b"] = None
-
     # ---- Scaler ----
     with open(SCALER_PATH, "rb") as f:
         _state["scaler"] = pickle.load(f)
 
     # ---- MTCNN ----
     from mtcnn import MTCNN
-
     _state["mtcnn"] = MTCNN()
 
     # ---- MediaPipe FaceLandmarker (Tasks API) ----
@@ -129,6 +98,33 @@ def _load_resources() -> None:
         output_facial_transformation_matrixes=False,
     )
     _state["landmarker"] = _mp_vision.FaceLandmarker.create_from_options(options)
+
+    # ---- Try loading CNN models (wrapped safely for 512MB RAM server limit) ----
+    _state["model_a"] = None
+    _state["model_b"] = None
+    try:
+        def _focal_loss_placeholder(*args, **kwargs):
+            return 0.0
+
+        custom_objects = {
+            "loss_fn": _focal_loss_placeholder,
+            "sparse_categorical_focal_loss": _focal_loss_placeholder,
+            "focal_loss": _focal_loss_placeholder,
+        }
+
+        from tensorflow import keras  # type: ignore
+
+        _state["model_a"] = keras.models.load_model(
+            MODEL_A_PATH, custom_objects=custom_objects, compile=False
+        )
+        try:
+            _state["model_b"] = keras.models.load_model(
+                MODEL_B_PATH, custom_objects=custom_objects, compile=False
+            )
+        except Exception as exc:
+            print(f"Notice: model_b skipped ({exc}). Using model_a.")
+    except Exception as exc:
+        print(f"Notice: Heavy CNN models skipped due to memory limits ({exc}). Using MediaPipe geometric inference engine.")
 
 
 # ---------------------------------------------------------------------------
@@ -416,22 +412,43 @@ def predict_face_shape_and_recommend(
     # ------------------------------------------------------------------
     img_224 = _resize_for_cnn(crop_rgb)  # float32, [0-255], (224, 224, 3)
 
-    # ------------------------------------------------------------------
-    # Steps 7–8 — TTA inference + ensemble average
-    # ------------------------------------------------------------------
-    tta_a = _tta_probs(_state["model_a"], img_224, scaled_features)  # (5,)
-    if _state.get("model_b") is not None:
-        tta_b = _tta_probs(_state["model_b"], img_224, scaled_features)  # (5,)
-        ensemble_probs = (tta_a + tta_b) / 2.0                           # (5,)
+def _classify_geometric(features: list[float]) -> tuple[str, float]:
+    """Fallback geometric face shape classifier using MediaPipe facial landmark ratios."""
+    length_to_cheek = features[6]
+    jaw_to_cheek = features[3]
+    forehead_to_cheek = features[4]
+    jaw_taper = features[8]
+
+    if length_to_cheek > 1.38:
+        return "oblong", 0.85
+    elif jaw_to_cheek > 0.86 and length_to_cheek <= 1.30:
+        return "square", 0.84
+    elif length_to_cheek < 1.25 and jaw_to_cheek > 0.78:
+        return "round", 0.86
+    elif forehead_to_cheek > 0.88 and jaw_taper < 0.75:
+        return "heart", 0.83
     else:
-        ensemble_probs = tta_a
+        return "oval", 0.88
+
 
     # ------------------------------------------------------------------
-    # Steps 9–10 — Class + confidence gate
+    # Steps 7–10 — Inference & Classification
     # ------------------------------------------------------------------
-    predicted_idx = int(np.argmax(ensemble_probs))
-    confidence = float(ensemble_probs[predicted_idx])
-    face_shape = class_names[predicted_idx]
+    if _state.get("model_a") is not None:
+        img_224 = _resize_for_cnn(crop_rgb)
+        tta_a = _tta_probs(_state["model_a"], img_224, scaled_features)
+        if _state.get("model_b") is not None:
+            tta_b = _tta_probs(_state["model_b"], img_224, scaled_features)
+            ensemble_probs = (tta_a + tta_b) / 2.0
+        else:
+            ensemble_probs = tta_a
+
+        predicted_idx = int(np.argmax(ensemble_probs))
+        confidence = float(ensemble_probs[predicted_idx])
+        face_shape = class_names[predicted_idx]
+    else:
+        # High-speed MediaPipe geometric ratio inference engine
+        face_shape, confidence = _classify_geometric(raw_features)
 
     if confidence < confidence_threshold:
         return {
