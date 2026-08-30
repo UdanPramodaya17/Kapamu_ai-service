@@ -90,9 +90,16 @@ def _load_resources() -> None:
     _state["model_a"] = keras.models.load_model(
         MODEL_A_PATH, custom_objects=custom_objects, compile=False
     )
-    _state["model_b"] = keras.models.load_model(
-        MODEL_B_PATH, custom_objects=custom_objects, compile=False
-    )
+    
+    # Model B is 220MB and may exceed 512MB RAM limit on free hosting instances.
+    # Load safely with fallback to Model A if memory limit is reached.
+    try:
+        _state["model_b"] = keras.models.load_model(
+            MODEL_B_PATH, custom_objects=custom_objects, compile=False
+        )
+    except Exception as exc:
+        print(f"Warning: model_b skipped due to memory limits ({exc}). Using model_a for inference.")
+        _state["model_b"] = None
 
     # ---- Scaler ----
     with open(SCALER_PATH, "rb") as f:
@@ -413,8 +420,11 @@ def predict_face_shape_and_recommend(
     # Steps 7–8 — TTA inference + ensemble average
     # ------------------------------------------------------------------
     tta_a = _tta_probs(_state["model_a"], img_224, scaled_features)  # (5,)
-    tta_b = _tta_probs(_state["model_b"], img_224, scaled_features)  # (5,)
-    ensemble_probs = (tta_a + tta_b) / 2.0                           # (5,)
+    if _state.get("model_b") is not None:
+        tta_b = _tta_probs(_state["model_b"], img_224, scaled_features)  # (5,)
+        ensemble_probs = (tta_a + tta_b) / 2.0                           # (5,)
+    else:
+        ensemble_probs = tta_a
 
     # ------------------------------------------------------------------
     # Steps 9–10 — Class + confidence gate
