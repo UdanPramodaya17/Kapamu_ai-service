@@ -310,6 +310,29 @@ def _tta_probs(
 
 
 # ---------------------------------------------------------------------------
+# Fallback — Pure geometric classifier (when CNN models are not loaded)
+# ---------------------------------------------------------------------------
+
+def _classify_geometric(features: list[float]) -> tuple[str, float]:
+    """Fallback geometric face shape classifier using MediaPipe facial landmark ratios."""
+    length_to_cheek = features[6]
+    jaw_to_cheek = features[3]
+    forehead_to_cheek = features[4]
+    jaw_taper = features[8]
+
+    if length_to_cheek > 1.38:
+        return "oblong", 0.85
+    elif jaw_to_cheek > 0.86 and length_to_cheek <= 1.30:
+        return "square", 0.84
+    elif length_to_cheek < 1.25 and jaw_to_cheek > 0.78:
+        return "round", 0.86
+    elif forehead_to_cheek > 0.88 and jaw_taper < 0.75:
+        return "heart", 0.83
+    else:
+        return "oval", 0.88
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
@@ -408,34 +431,12 @@ def predict_face_shape_and_recommend(
     scaled_features = scaler.transform(feat_array).astype(np.float32)     # (1, 12)
 
     # ------------------------------------------------------------------
-    # Step 6 — Resize crop to 224×224 for CNN (separate from landmark step)
-    # ------------------------------------------------------------------
-    img_224 = _resize_for_cnn(crop_rgb)  # float32, [0-255], (224, 224, 3)
-
-def _classify_geometric(features: list[float]) -> tuple[str, float]:
-    """Fallback geometric face shape classifier using MediaPipe facial landmark ratios."""
-    length_to_cheek = features[6]
-    jaw_to_cheek = features[3]
-    forehead_to_cheek = features[4]
-    jaw_taper = features[8]
-
-    if length_to_cheek > 1.38:
-        return "oblong", 0.85
-    elif jaw_to_cheek > 0.86 and length_to_cheek <= 1.30:
-        return "square", 0.84
-    elif length_to_cheek < 1.25 and jaw_to_cheek > 0.78:
-        return "round", 0.86
-    elif forehead_to_cheek > 0.88 and jaw_taper < 0.75:
-        return "heart", 0.83
-    else:
-        return "oval", 0.88
-
-
-    # ------------------------------------------------------------------
     # Steps 7–10 — Inference & Classification
     # ------------------------------------------------------------------
     if _state.get("model_a") is not None:
-        img_224 = _resize_for_cnn(crop_rgb)
+        # Step 6 — Resize crop to 224×224 for CNN
+        img_224 = _resize_for_cnn(crop_rgb)  # float32, [0-255], (224, 224, 3)
+
         tta_a = _tta_probs(_state["model_a"], img_224, scaled_features)
         if _state.get("model_b") is not None:
             tta_b = _tta_probs(_state["model_b"], img_224, scaled_features)
@@ -447,7 +448,7 @@ def _classify_geometric(features: list[float]) -> tuple[str, float]:
         confidence = float(ensemble_probs[predicted_idx])
         face_shape = class_names[predicted_idx]
     else:
-        # High-speed MediaPipe geometric ratio inference engine
+        # High-speed MediaPipe geometric ratio inference engine (fallback)
         face_shape, confidence = _classify_geometric(raw_features)
 
     if confidence < confidence_threshold:
