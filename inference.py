@@ -143,7 +143,10 @@ def _crop_face(image_rgb: np.ndarray) -> np.ndarray:
         raise ValueError("no_face")
 
     # Pick highest-confidence detection
-    best = max(detections, key=lambda d: d["confidence"])
+    best = max(detections, key=lambda d: d.get("confidence", 0))
+    if best.get("confidence", 0) < 0.85:
+        raise ValueError("no_face")
+
     x, y, w, h = best["box"]
     # MTCNN can return negative coordinates for faces near edges
     x, y = max(x, 0), max(y, 0)
@@ -405,9 +408,9 @@ def predict_face_shape_and_recommend(
         if code == "no_face":
             return _err(
                 "no_face",
-                "No face detected — please upload a clear, front-facing photo.",
+                "No human face detected. Please upload a clear photo of a real human face.",
             )
-        return _err("detection_error", str(exc))
+        return _err("detection_error", "Face detection failed. Please upload a clear photo of a real human face.")
 
     # ------------------------------------------------------------------
     # Steps 3–4 — Landmarks & geometric features on ORIGINAL crop
@@ -419,10 +422,9 @@ def predict_face_shape_and_recommend(
         if code == "no_landmarks":
             return _err(
                 "no_landmarks",
-                "Face detected but landmarks could not be extracted — "
-                "try a better-lit, front-facing photo.",
+                "Human facial features could not be identified. Please upload a well-lit, front-facing human portrait photo.",
             )
-        return _err("landmark_error", str(exc))
+        return _err("landmark_error", "Could not analyze facial structure. Please ensure your full face is visible.")
 
     # ------------------------------------------------------------------
     # Step 5 — Scale features
@@ -453,12 +455,13 @@ def predict_face_shape_and_recommend(
 
     if confidence < confidence_threshold:
         return {
+            "error": True,
             "face_shape": None,
             "confidence": round(confidence, 4),
             "is_confident": False,
             "message": (
-                "Photo isn't clear enough — please retake with a "
-                "front-facing, well-lit photo."
+                "Photo is not clear enough for accurate human facial analysis. "
+                "Please upload a clear, front-facing human face photo."
             ),
         }
 
