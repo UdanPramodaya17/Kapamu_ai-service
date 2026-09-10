@@ -1,9 +1,9 @@
-tensorflow>=2.15.0
+tensorflow-cpu>=2.15.0
 mtcnn
 mediapipe>=0.10.9
 scikit-learn
 pillow
-numpy
+numpy<2.0.0
 fastapi
 uvicorn[standard]
 python-multipart
